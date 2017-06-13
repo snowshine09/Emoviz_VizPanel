@@ -1,0 +1,362 @@
+<!DOCTYPE>
+<html>
+
+<head>
+	<title>emotion summary</title>
+	<script src="https://d3js.org/d3.v4.min.js"></script>
+	<script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+	<script src="d3-tip.js"></script>
+	<style type="text/css">
+		.d3-tip {
+			line-height: 1;
+			padding: 6px;
+			background: rgba(0, 0, 0, 0.8);
+			color: #fff;
+			border-radius: 4px;
+			font-size: 12px;
+		}
+
+		/* Creates a small triangle extender for the tooltip */
+		.d3-tip:after {
+			box-sizing: border-box;
+			display: inline;
+			font-size: 10px;
+			width: 100%;
+			line-height: 1;
+			color: rgba(0, 0, 0, 0.8);
+			content: "\25BC";
+			position: absolute;
+			text-align: center;
+		}
+
+		/* Style northward tooltips specifically */
+		.d3-tip.n:after {
+			margin: -2px 0 0 0;
+			top: 100%;
+			left: 0;
+		}
+	</style>
+</head>
+<body>
+	<h1 id="2">Sunburst Graph</h1>
+	<h3>Arc levels represent Document id, Selection id, and emoticon types </h3>
+	<svg></svg>
+</body>
+<script type="text/javascript">
+	var Width = 500, Height = 500;
+	var Radius = Math.min(Width, Height)/2;
+	var color = d3.scaleOrdinal(d3.schemeCategory20);
+	// var color3 = d3.scaleOrdinal(d3.schemeCategory20c);
+	var color3 = function(Arr){
+		return d3.scaleOrdinal()
+		.domain(Arr)
+		.range(d3.range(Arr.length).map(d3.scaleLinear()
+			.domain([0, Arr.length - 1])
+			.range(["pink", "gray"])
+			.interpolate(d3.interpolateHcl)));
+	}
+	var colorScheme = function(seedColor,Arr){
+		var ToRange = [], i = 1;
+		ToRange[0] = d3.rgb(seedColor).darker(2).toString();
+		Arr.forEach(function(d){
+			if(i==5) {i=1;}
+			ToRange.push(d3.rgb(ToRange[i-1]).brighter(1).toString());
+			i+=1;
+			
+		});
+		return d3.scaleOrdinal().domain(Arr).range(ToRange);
+	}
+	var svg=d3.select('svg')
+	.attr('height',Height)
+	.attr('width', Width)
+	.append('g')
+	.attr('transform','translate('+Width/2 + ',' + Height/2+')');
+	var partition = d3.partition()
+	.size([2*Math.PI, Radius]);
+	var idx_Arr = ["document", "selection","emoticon"];
+	d3.csv('./5documents_logs.csv', function(error, rdata){
+		if(error) throw(error);
+		// console.log(data);
+		data = d3.nest()
+		.key(d => d.document_id)
+		.key(d => d.selection_id)
+		.key(function(d){
+			return d.emoticons;
+		})
+		.rollup(function(leaves) { return leaves.length;})//{"size":leaves.length, "ppl": d3.nest().key(d=>d.user_id).entries(leaves).length}
+		.entries(rdata);
+		// data2 = d3.nest()
+		// .key(d=>d.document_id)
+		// .key(d=>d.selection_id)
+		// .map(rdata, function(document){
+		// 	document.name=document.key;
+		// 	document.size = document.values.length;
+		// });
+
+
+		// console.log(data);
+		// console.log(data['s:3:\[3]\";"']);
+		// data.keys()
+		// data.forEach(function(d){//each document level 1
+		// 	d.name=d.key;
+		// 	d.level = 1;
+		// 	d.values.forEach(function(d){ //each selection level 2
+		// 		d.name = d.key;
+		// 		d.level = 2;
+		// 		d.values.forEach(function(d){
+		// 			d.name = d.key;
+		// 			d.level = 3;
+		// 		})
+		// 	})
+		// })
+		drawSunburst(data);
+		drawStackedBarchart();
+
+	});
+	function drawSunburst(data) {
+
+        // Find the root node, calculate the node.value, and sort our nodes by node.value
+        root = d3.hierarchy({values: data}, function(d) { return d.values; })
+        .sum(function(d) { 
+    	// console.log('this is within sum; d is ' + d);
+    	// console.dir(d);
+    	return d.value; });
+        // root = d3.hierarchy(data)
+        // .sum(function (d) { return d.size; })
+        // .sort(function (a, b) { return b.value - a.value; });
+
+        // Calculate the size of each arc; save the initial angles for tweening.
+        partition(root);
+        arc = d3.arc()
+        .startAngle(function (d) { d.x0s = d.x0; return d.x0; })
+        .endAngle(function (d) { d.x1s = d.x1; return d.x1; })
+        .innerRadius(function (d) { return d.y0; })
+        .outerRadius(function (d) { return d.y1; });
+
+        // Add a <g> element for each node; create the slice variable since we'll refer to this selection many times
+        slice = svg.selectAll('g.node').data(root.descendants(), function(d) { return d.key; }); // .enter().append('g').attr("class", "node");
+        newSlice = slice.enter().append('g').attr("class", "node").merge(slice);
+        slice.exit().remove();
+
+        // TRY 1: ID selection that's has been drawn previously... (requires us to set "drawn" down below)
+        //newSlice.filter ( function(d) { return !d.drawn; }).append('path')
+        //    .attr("display", function (d) { return d.depth ? null : "none"; }).style('stroke', '#fff');
+
+        // TRY 2: Only create paths on "first run"
+        //if (firstRun) {
+        //    newSlice.append('path').attr("display", function (d) { return d.depth ? null : "none"; }).style('stroke', '#fff');
+        //}
+
+        // TRY 1&2: Set path-d and color always. But this isn't using new arc...?
+        //newSlice.selectAll('path').attr("d", arc).style("fill", function (d) { return color((d.children ? d : d.parent).data.name); });
+
+        // Append <path> elements and draw lines based on the arc calculations. Last, color the lines and the slices.
+        slice.selectAll('path').remove();
+        newSlice.append('path')
+        .attr("display", function (d) { return d.depth ? null : "none"; })
+        .attr("d", arc)
+        .style('stroke', '#fff')
+        .style("fill", function (d) { 
+        	switch(d.depth){
+        		case 1:
+        		return color(d.data.key); 
+        		break;
+        		case 2:
+        		var Arr = [];
+        		d.parent.children.forEach(d=>Arr.push(d.data.key));
+        		return colorScheme(color(d.parent.data.key),Arr)(d.data.key);
+        		break;
+        		case 3:
+        		var Arr = [];
+        		d.parent.children.forEach(d=>Arr.push(d.data.key));
+        		return color3(Arr)(d.data.key);
+        	}
+        });
+
+        // Populate the <text> elements with our data-driven titles.
+        slice.selectAll('text').remove();
+        newSlice.append("text")
+        .attr("transform", function(d) {
+        	return "translate(" + arc.centroid(d) + ")rotate(" + computeTextRotation(d) + ")"; })
+        .attr("dx", "-20")
+        .attr("dy", ".5em")
+        .text(function(d) {  
+        	if(d.depth==3) return '';
+        	return d.parent ? d.data.key : "Topics" 
+        });
+       // tooltip add
+       var tip = d3.tip()
+       .attr('class', 'd3-tip')
+       .offset(function() {
+
+       	return [0, 0]
+       })
+       .html(function(d) {
+
+       	var str = '', tmp =d.depth?function(){ str = idx_Arr[d.depth-1]; return d.data.key;}():Topics;
+       	return str +"<strong># "+ tmp +":"+" </strong> <span style='color:red'>" + d.value + "</span>";
+       });
+       newSlice.call(tip);
+       newSlice.on("click", highlightSelectedSlice)
+       .on("mouseover",tip.show)
+       .on("mouseout",tip.hide);
+
+   };
+   function highlightSelectedSlice(c,i) {
+
+   	clicked = c;
+   	var rootPath = clicked.path(root).reverse();
+        rootPath.shift(); // remove root node from the array
+
+        newSlice.style("opacity", 0.4);
+        newSlice.filter(function(d) {
+        	if (d === clicked && d.prevClicked) {
+        		d.prevClicked = false;
+        		newSlice.style("opacity", 1);
+        		return true;
+
+        	} else if (d === clicked) {
+        		d.prevClicked = true;
+        		return true;
+        	} else {
+        		d.prevClicked = false;
+        		return (rootPath.indexOf(d) >= 0);
+        	}
+        })
+        .style("opacity", 1);
+
+        //d3.select("#sidebar").text("another!");
+
+    };
+
+    // Redraw the Sunburst Based on User Input
+
+
+    /**
+     * When switching data: interpolate the arcs in data space.
+     * @param {Node} a
+     * @param {Number} i
+     * @return {Number}
+     */
+     function arcTweenPath(a, i) {
+
+     	var oi = d3.interpolate({ x0: a.x0s, x1: a.x1s }, a);
+
+     	function tween(t) {
+     		var b = oi(t);
+     		a.x0s = b.x0;
+     		a.x1s = b.x1;
+     		return arc(b);
+     	}
+
+     	return tween;
+     }
+
+    /**
+     * When switching data: interpolate the text centroids and rotation.
+     * @param {Node} a
+     * @param {Number} i
+     * @return {Number}
+     */
+     function arcTweenText(a, i) {
+
+     	var oi = d3.interpolate({ x0: a.x0s, x1: a.x1s }, a);
+     	function tween(t) {
+     		var b = oi(t);
+     		return "translate(" + arc.centroid(b) + ")rotate(" + computeTextRotation(b) + ")";
+     	}
+     	return tween;
+     }
+
+    /**
+     * Calculate the correct distance to rotate each label based on its location in the sunburst.
+     * @param {Node} d
+     * @return {Number}
+     */
+     function computeTextRotation(d) {
+     	var angle = (d.x0 + d.x1) / Math.PI * 90;
+
+        // Avoid upside-down labels
+        return (angle < 120 || angle > 270) ? angle : angle + 180;  // labels as rims
+        //return (angle < 180) ? angle - 90 : angle + 90;  // labels as spokes
+    }
+
+
+    //stacked barchart
+
+    function drawStackedBarchart(){
+  //   	var causes = ["happy", "worried", "amazed","surpised","confused"];
+
+  //   	// var parseDate = d3.time.format("%m/%Y").parse;
+
+  //   	var margin = {top: 20, right: 50, bottom: 30, left: 20},
+  //   	width = 960 - margin.left - margin.right,
+  //   	height = 500 - margin.top - margin.bottom;
+
+  //   	var x = d3.scaleBand()
+  // .rangeRound([0, width]);
+
+  //   	var y = d3.scaleLinear()
+  //   	.rangeRound([height, 0]);
+
+  //   	var z = d3.scaleCategory10;
+
+  //   	var xAxis = d3.svg.axis()
+  //   	.scale(x)
+  //   	.orient("bottom");
+
+  //   	var yAxis = d3.svg.axis()
+  //   	.scale(y)
+  //   	.orient("right");
+
+  //   	var svg = d3.select("body").append("svg")
+  //   	.attr("width", width + margin.left + margin.right)
+  //   	.attr("height", height + margin.top + margin.bottom)
+  //   	.append("g")
+  //   	.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+  //   	d3.csv("./emotions.csv",function(error, crimea) {
+  //   		if (error) throw error;
+
+  //   		var layers = d3.layout.stack()(causes.map(function(c) {
+  //   			return crimea.map(function(d) {
+  //   				return {x: d.document_id, y: d[c]};
+  //   			});
+  //   		}));
+
+  //   		x.domain(layers[0].map(function(d) { return d.x; }));
+  //   		y.domain([0, d3.max(layers[layers.length - 1], function(d) { return d.y0 + d.y; })]).nice();
+
+  //   		var layer = svg.selectAll(".layer")
+  //   		.data(layers)
+  //   		.enter().append("g")
+  //   		.attr("class", "layer")
+  //   		.style("fill", function(d, i) { return z(i); });
+
+  //   		layer.selectAll("rect")
+  //   		.data(function(d) { return d; })
+  //   		.enter().append("rect")
+  //   		.attr("x", function(d) { return x(d.x); })
+  //   		.attr("y", function(d) { return y(d.y + d.y0); })
+  //   		.attr("height", function(d) { return y(d.y0) - y(d.y + d.y0); })
+  //   		.attr("width", x.rangeBand() - 1);
+
+  //   		svg.append("g")
+  //   		.attr("class", "axis axis--x")
+  //   		.attr("transform", "translate(0," + height + ")")
+  //   		.call(xAxis);
+
+  //   		svg.append("g")
+  //   		.attr("class", "axis axis--y")
+  //   		.attr("transform", "translate(" + width + ",0)")
+  //   		.call(yAxis);
+  //   	});
+
+    	// function type(d) {
+    	// 	d.date = parseDate(d.date);
+    	// 	causes.forEach(function(c) { d[c] = +d[c]; });
+    	// 	return d;
+    	// }
+    }
+</script>
+</html>
